@@ -394,11 +394,17 @@ async def predict(image: UploadFile = File(...)):
         # 6. Generate Grad-CAM explanation
         print("PREDICT: starting Grad-CAM", flush=True)
 
-        cam, heatmap, overlay = generate_gradcam(
+        '''cam, heatmap, overlay = generate_gradcam(
             input_tensor,
             original_image,
             predicted_class,
-        )
+        )'''
+        print("PREDICT: Grad-CAM temporarily skipped", flush=True)
+
+        cam = np.zeros((224, 224), dtype=np.float32)
+        heatmap = np.zeros((224, 224, 3), dtype=np.uint8)
+        overlay = np.zeros((224, 224, 3), dtype=np.uint8)
+        highlighted_ratio = 0.0
 
         print("PREDICT: Grad-CAM finished", flush=True)
 
