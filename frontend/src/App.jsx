@@ -29,45 +29,67 @@ function App() {
     setError("");
   }
 
-  async function analyzeImage(event) {
-    event.preventDefault();
+  
+async function analyzeImage(event) {
+  event.preventDefault();
 
-    if (!image) {
-      setError("Please upload an image first.");
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-    setResult(null);
-
-    const formData = new FormData();
-    formData.append("image", image);
-
-    try {
-      const response = await fetch(API_URL, {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.detail || "Image analysis failed. Please try again."
-        );
-      }
-
-      setResult(data);
-    } catch (err) {
-      setError(
-        err.message ||
-          "Cannot connect to the backend. Make sure FastAPI is running."
-      );
-    } finally {
-      setLoading(false);
-    }
+  if (!image) {
+    setError("Please upload an image first.");
+    return;
   }
+
+  if (!API_URL) {
+    setError("Backend URL is missing. Configure VITE_API_URL.");
+    return;
+  }
+
+  setLoading(true);
+  setError("");
+  setResult(null);
+
+  const formData = new FormData();
+  formData.append("image", image);
+
+  try {
+    const response = await fetch(API_URL, {
+      method: "POST",
+      body: formData,
+    });
+
+    const responseText = await response.text();
+
+    let data = {};
+    try {
+      data = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      data = {};
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        data.detail ||
+          `Backend error (${response.status}). Check Render logs.`
+      );
+    }
+
+    if (!responseText) {
+      throw new Error("Backend returned an empty response.");
+    }
+
+    if (!data || typeof data !== "object") {
+      throw new Error("Backend returned an invalid response.");
+    }
+
+    setResult(data);
+  } catch (err) {
+    setError(
+      err.message ||
+        "Could not connect to the backend. Please try again."
+    );
+  } finally {
+    setLoading(false);
+  }
+}
 
   function resetAnalysis() {
     if (preview) URL.revokeObjectURL(preview);
@@ -171,8 +193,8 @@ function App() {
             )}
 
             <p className="privacy-note">
-              Your image is sent to your local backend for analysis.
-            </p>
+  Your image is sent to our deployed backend for analysis.
+</p>
           </div>
 
           <div className="results-card">
