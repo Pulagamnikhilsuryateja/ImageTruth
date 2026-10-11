@@ -324,6 +324,9 @@ def identify_generator(image_bytes: bytes, filename: str) -> dict:
 
 @app.post("/predict")
 async def predict(image: UploadFile = File(...)):
+    print("PREDICT: request received", flush=True)
+
+    # 1. Validate uploaded file
     if image.content_type and not image.content_type.startswith("image/"):
         raise HTTPException(
             status_code=400,
@@ -331,7 +334,13 @@ async def predict(image: UploadFile = File(...)):
         )
 
     try:
+        # 2. Read and validate image
         raw_bytes = await image.read()
+
+        print(
+            f"PREDICT: image received, size={len(raw_bytes)} bytes",
+            flush=True,
+        )
 
         if not raw_bytes:
             raise HTTPException(
@@ -342,25 +351,35 @@ async def predict(image: UploadFile = File(...)):
         original_image = Image.open(
             io.BytesIO(raw_bytes)
         ).convert("RGB")
-     
-    except UnidentifiedImageError:
-        raise HTTPException(
-            status_code=400,
-            detail="The uploaded file is not a valid image.",
+
+        print(
+            f"PREDICT: image decoded, size={original_image.size}",
+            flush=True,
         )
-    generator_analysis = identify_generator(
-        raw_bytes,
-        image.filename or "image.jpg",
-    )
 
-    # Match the preprocessing used for model inference.
-    input_tensor = preprocess(original_image).unsqueeze(0).to(device)
+        # 3. Analyze possible generator
+        print("PREDICT: starting generator analysis", flush=True)
 
-    try:
-        # Obtain the prediction.
+        generator_analysis = identify_generator(
+            raw_bytes,
+            image.filename or "image.jpg",
+        )
+
+        print("PREDICT: generator analysis finished", flush=True)
+
+        # 4. Preprocess image
+        input_tensor = preprocess(original_image).unsqueeze(0).to(device)
+
+        print("PREDICT: preprocessing finished", flush=True)
+
+        # 5. Run model inference
+        print("PREDICT: starting model inference", flush=True)
+
         with torch.no_grad():
             output = model(input_tensor)
             probabilities = torch.softmax(output, dim=1)[0]
+
+        print("PREDICT: model inference finished", flush=True)
 
         predicted_class = int(torch.argmax(probabilities).item())
         predicted_label = CLASS_NAMES[predicted_class]
@@ -372,16 +391,18 @@ async def predict(image: UploadFile = File(...)):
             for i in range(len(CLASS_NAMES))
         }
 
-        # Grad-CAM explains the predicted class.
+        # 6. Generate Grad-CAM explanation
+        print("PREDICT: starting Grad-CAM", flush=True)
+
         cam, heatmap, overlay = generate_gradcam(
             input_tensor,
             original_image,
             predicted_class,
         )
 
-        highlighted_ratio = float(
-            np.mean(cam >= 0.6) * 100
-        )
+        print("PREDICT: Grad-CAM finished", flush=True)
+
+        highlighted_ratio = float(np.mean(cam >= 0.6) * 100)
 
         explanation = (
             f"The model classified this image as "
@@ -396,6 +417,15 @@ async def predict(image: UploadFile = File(...)):
             f"does not prove the image's origin."
         )
 
+        # 7. Encode Grad-CAM images
+        print("PREDICT: encoding explanation images", flush=True)
+
+        heatmap_base64 = image_to_base64(heatmap)
+        overlay_base64 = image_to_base64(overlay)
+
+        print("PREDICT: preparing response", flush=True)
+
+        # 8. Return prediction
         return {
             "prediction": predicted_label,
             "scores": scores,
@@ -404,8 +434,8 @@ async def predict(image: UploadFile = File(...)):
             "possible_generator": (
                 "Not identifiable by this binary classifier."
             ),
-            "gradcam_heatmap": image_to_base64(heatmap),
-            "gradcam_overlay": image_to_base64(overlay),
+            "gradcam_heatmap": heatmap_base64,
+            "gradcam_overlay": overlay_base64,
             "warning": (
                 "Scores are model outputs, not necessarily calibrated "
                 "probabilities. Performance on image types outside "
@@ -415,7 +445,19 @@ async def predict(image: UploadFile = File(...)):
 
     except HTTPException:
         raise
+
+    except UnidentifiedImageError:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is not a valid image.",
+        )
+
     except Exception as exc:
+        print(
+            f"PREDICT ERROR: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
         raise HTTPException(
             status_code=500,
             detail=f"Image analysis failed: {str(exc)}",
