@@ -6,6 +6,5 @@ numpy
 opencv-python-headless
 torch
 torchvision
-PyTorch
 requests
 python-dotenv
