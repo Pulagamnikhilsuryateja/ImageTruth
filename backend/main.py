@@ -1,4 +1,5 @@
 
+
 import base64
 import io
 from pathlib import Path
@@ -7,12 +8,6 @@ import cv2
 import numpy as np
 import torch
 import torch.nn as nn
-import os
-import requests
-
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).resolve().parent / ".env")
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
@@ -215,109 +210,6 @@ def health():
         "classes": CLASS_NAMES,
     }
 
-def identify_generator(image_bytes: bytes, filename: str) -> dict:
-    """Use Sightengine only for AI-origin and possible-generator analysis."""
-    api_user = os.getenv("SIGHTENGINE_API_USER")
-    api_secret = os.getenv("SIGHTENGINE_API_SECRET")
-
-    if not api_user or not api_secret:
-        return {
-            "status": "unavailable",
-            "message": "Generator API credentials are not configured.",
-            "ai_generated_score": None,
-            "possible_generators": [],
-        }
-
-    try:
-        response = requests.post(
-            "https://api.sightengine.com/1.0/check.json",
-            data={
-                "models": "genai",
-                "api_user": api_user,
-                "api_secret": api_secret,
-            },
-            files={
-                "media": (
-                    filename or "image.jpg",
-                    image_bytes,
-                    "application/octet-stream",
-                )
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        if data.get("status") != "success":
-            return {
-                "status": "unavailable",
-                "message": "The generator API could not analyze this image.",
-                "ai_generated_score": None,
-                "possible_generators": [],
-            }
-
-        result_data = data.get("type") or {}
-        raw_ai_score = result_data.get("ai_generated")
-        ai_score = float(raw_ai_score) if raw_ai_score is not None else None
-        raw_generator_scores = result_data.get("ai_generators") or {}
-
-        if not isinstance(raw_generator_scores, dict):
-            raw_generator_scores = {}
-
-        # Do not suggest a specific source when the API does not indicate
-        # that the image is likely AI-generated.
-        if ai_score is None or ai_score < 0.5:
-            return {
-                "status": "success",
-                "ai_generated_score": (
-                    round(ai_score * 100, 2) if ai_score is not None else None
-                ),
-                "possible_generators": [],
-                "message": (
-                    "The API did not strongly indicate an AI-generated image; "
-                    "generator attribution may be unreliable."
-                ),
-            }
-
-        parsed_scores = []
-        for name, score in raw_generator_scores.items():
-            try:
-                parsed_scores.append((str(name), float(score)))
-            except (TypeError, ValueError):
-                continue
-
-        top_generators = sorted(
-            parsed_scores,
-            key=lambda item: item[1],
-            reverse=True,
-        )[:3]
-
-        return {
-            "status": "success",
-            "ai_generated_score": round(ai_score * 100, 2),
-            "possible_generators": [
-                {
-                    "name": name.replace("_", " ").title(),
-                    "score": round(score * 100, 2),
-                }
-                for name, score in top_generators
-            ],
-            "message": (
-                "Generator scores are estimates, not proof of the exact "
-                "app or model used."
-            ),
-        }
-
-    except (requests.RequestException, ValueError, TypeError):
-        return {
-            "status": "unavailable",
-            "message": "Generator identification is temporarily unavailable.",
-            "ai_generated_score": None,
-            "possible_generators": [],
-        }
-
-
-
 # --------------------------------------------------
 # 7. IMAGE PREDICTION + EXPLANATION
 # --------------------------------------------------
@@ -357,17 +249,7 @@ async def predict(image: UploadFile = File(...)):
             flush=True,
         )
 
-        # 3. Analyze possible generator
-        print("PREDICT: starting generator analysis", flush=True)
-
-        generator_analysis = identify_generator(
-            raw_bytes,
-            image.filename or "image.jpg",
-        )
-
-        print("PREDICT: generator analysis finished", flush=True)
-
-        # 4. Preprocess image
+        # 3. Preprocess image
         input_tensor = preprocess(original_image).unsqueeze(0).to(device)
 
         print("PREDICT: preprocessing finished", flush=True)
@@ -391,20 +273,14 @@ async def predict(image: UploadFile = File(...)):
             for i in range(len(CLASS_NAMES))
         }
 
-        # 6. Generate Grad-CAM explanation
+        # 5. Generate real Grad-CAM explanation images
         print("PREDICT: starting Grad-CAM", flush=True)
 
-        '''cam, heatmap, overlay = generate_gradcam(
+        cam, heatmap, overlay = generate_gradcam(
             input_tensor,
             original_image,
             predicted_class,
-        )'''
-        print("PREDICT: Grad-CAM temporarily skipped", flush=True)
-
-        cam = np.zeros((224, 224), dtype=np.float32)
-        heatmap = np.zeros((224, 224, 3), dtype=np.uint8)
-        overlay = np.zeros((224, 224, 3), dtype=np.uint8)
-        highlighted_ratio = 0.0
+        )
 
         print("PREDICT: Grad-CAM finished", flush=True)
 
@@ -435,11 +311,7 @@ async def predict(image: UploadFile = File(...)):
         return {
             "prediction": predicted_label,
             "scores": scores,
-            "generator_analysis": generator_analysis,
             "explanation": explanation,
-            "possible_generator": (
-                "Not identifiable by this binary classifier."
-            ),
             "gradcam_heatmap": heatmap_base64,
             "gradcam_overlay": overlay_base64,
             "warning": (
