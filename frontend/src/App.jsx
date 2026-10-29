@@ -344,7 +344,7 @@ function App() {
 
             <p className="privacy-note">
 
-              Your image is sent to your local backend for analysis.
+              Your image is sent to your deployed backend for analysis.
 
             </p>
 
